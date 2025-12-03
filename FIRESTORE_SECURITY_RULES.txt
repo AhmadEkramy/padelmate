@@ -1,0 +1,236 @@
+===========================================
+FIRESTORE SECURITY RULES
+===========================================
+
+Copy and paste these rules into your Firebase Console:
+Firebase Console > Firestore Database > Rules
+
+===========================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection - users can read all user documents (for find-match feature)
+    // but can only write their own document (except for rating updates)
+    match /users/{userId} {
+      // Allow read for all authenticated users (needed for find-match page)
+      allow read: if request.auth != null;
+      
+      // Allow create if user is authenticated and creating their own document
+      allow create: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow update if user is authenticated and updating their own document
+      // OR if updating only rating/ratingCount fields (for rating submissions)
+      // Note: Only admins can update the 'role' field
+      allow update: if request.auth != null && (
+        (request.auth.uid == userId && 
+         (!('role' in request.resource.data.diff(resource.data).affectedKeys()) || 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')) ||
+        // Allow rating updates on other users' documents
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rating', 'ratingCount']))
+      );
+    }
+    
+    // Courts collection - all authenticated users can read, only admins can write
+    match /courts/{courtId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // Only admins can create, update, or delete courts
+      allow create, update, delete: if request.auth != null && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Groups collection - all authenticated users can read, authenticated users can create
+    match /groups/{groupId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create groups
+      allow create: if request.auth != null;
+      
+      // Only admins can update or delete groups
+      allow update, delete: if request.auth != null && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Posts collection - all authenticated users can read and create
+    match /posts/{postId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create posts
+      allow create: if request.auth != null;
+      
+      // Users can update/delete their own posts, admins can update/delete any
+      allow update, delete: if request.auth != null && 
+        (resource.data.authorId == request.auth.uid || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    
+    // Events collection - all authenticated users can read, authenticated users can create
+    match /events/{eventId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create events
+      allow create: if request.auth != null;
+      
+      // Users can update/delete their own events, admins can update/delete any
+      allow update, delete: if request.auth != null && 
+        (resource.data.createdBy == request.auth.uid || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    
+    // Market collection - all authenticated users can read and create
+    match /market/{itemId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create market items
+      allow create: if request.auth != null;
+      
+      // Users can update/delete their own items, admins can update/delete any
+      allow update, delete: if request.auth != null && 
+        (resource.data.sellerId == request.auth.uid || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    
+    // Matches collection - all authenticated users can read and create
+    match /matches/{matchId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create matches
+      allow create: if request.auth != null;
+      
+      // Users can update/delete their own matches, admins can update/delete any
+      // Also allow updates to participants array (for join/leave functionality)
+      allow update, delete: if request.auth != null && 
+        (resource.data.createdBy == request.auth.uid || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         // Allow updates to participants array for join/leave
+         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'status'])));
+    }
+    
+    // Ratings collection - all authenticated users can create ratings
+    match /ratings/{ratingId} {
+      // Allow read for all authenticated users
+      allow read: if request.auth != null;
+      
+      // All authenticated users can create ratings
+      allow create: if request.auth != null;
+      
+      // Users can only update/delete their own ratings, admins can update/delete any
+      allow update, delete: if request.auth != null && 
+        (resource.data.ratedBy == request.auth.uid || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    
+    // Match Requests collection - for join requests
+    match /matchRequests/{requestId} {
+      // Allow read for authenticated users
+      // Users can read requests they sent or received
+      allow read: if request.auth != null && 
+        (resource.data.requestedBy == request.auth.uid || 
+         resource.data.matchCreator == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      
+      // All authenticated users can create requests
+      // Ensure the request is being created by the authenticated user
+      allow create: if request.auth != null && 
+        request.resource.data.requestedBy == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      
+      // Users can update/delete their own requests, match creators can update to accept/reject, admins can do anything
+      allow update, delete: if request.auth != null && 
+        (resource.data.requestedBy == request.auth.uid || 
+         resource.data.matchCreator == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      
+      // Allow list queries for authenticated users (needed for querying by matchId and requestedBy)
+      // This allows queries where the user is filtering by their own ID or matchCreator ID
+      allow list: if request.auth != null;
+    }
+    
+    // Match Invitations collection - for match invitations
+    match /matchInvitations/{invitationId} {
+      // Allow read for authenticated users
+      // Users can read invitations they sent or received
+      allow read: if request.auth != null && 
+        (resource.data.invitedBy == request.auth.uid || 
+         resource.data.invitedPlayerId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      
+      // All authenticated users can create invitations
+      allow create: if request.auth != null && 
+        request.resource.data.invitedBy == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      
+      // Users can update/delete their own invitations, admins can do anything
+      allow update, delete: if request.auth != null && 
+        (resource.data.invitedBy == request.auth.uid || 
+         resource.data.invitedPlayerId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      
+      // Allow list queries for authenticated users
+      allow list: if request.auth != null;
+    }
+    
+    // Notifications collection - for user notifications
+    match /notifications/{notificationId} {
+      // Users can only read their own notifications
+      allow read: if request.auth != null && 
+        resource.data.userId == request.auth.uid;
+      
+      // Anyone can create notifications (for system notifications)
+      // But typically notifications are created server-side or by the system
+      allow create: if request.auth != null;
+      
+      // Users can only update their own notifications (mark as read)
+      allow update: if request.auth != null && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      
+      // Users can delete their own notifications, admins can delete any
+      allow delete: if request.auth != null && 
+        (resource.data.userId == request.auth.uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      
+      // Allow list queries for authenticated users (filtered by userId)
+      allow list: if request.auth != null;
+    }
+    
+    // Add other collection rules below as needed
+  }
+}
+
+===========================================
+HOW TO APPLY THESE RULES:
+===========================================
+
+1. Go to Firebase Console: https://console.firebase.google.com/
+2. Select your project: padel-mate-f188a
+3. Click on "Firestore Database" in the left sidebar
+4. Click on the "Rules" tab
+5. Replace the existing rules with the rules above
+6. Click "Publish" to save the changes
+
+===========================================
+IMPORTANT NOTES:
+===========================================
+
+- These rules allow authenticated users to read all user documents (needed for find-match feature)
+- Users can only create and update their own documents
+- Only admins can change the 'role' field
+- All authenticated users can read courts (for courts page)
+- Only admins can create, update, or delete courts
+- All authenticated users can read and create groups, posts, events, market items, and matches
+- Users can update/delete their own posts, events, market items, and matches
+- Admins can update/delete any content
+- Make sure to test your rules after applying them
+- For production, consider adding more specific rules for other collections
+
+===========================================
+
